@@ -1,0 +1,73 @@
+services:
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.13.0
+    container_name: job-aggregator-es
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=true
+      - ELASTIC_PASSWORD=changeme
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+    ports:
+      - "9200:9200"
+    volumes:
+      - es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -s -u elastic:changeme http://localhost:9200/_cluster/health | grep -qE '\"status\":\"(green|yellow)\"'"]
+      interval: 15s
+      timeout: 5s
+      retries: 30
+    networks:
+      - job-aggregator
+
+  redis:
+    image: redis:7-alpine
+    container_name: job-aggregator-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    networks:
+      - job-aggregator
+
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: job-aggregator-backend
+    env_file:
+      - .env
+    environment:
+      - RAPIDAPI_KEY=${RAPIDAPI_KEY}
+    ports:
+      - "8000:8000"
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - job-aggregator
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: job-aggregator-frontend
+    environment:
+      - VITE_API_PROXY_TARGET=http://job-aggregator-backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - job-aggregator
+    restart: unless-stopped
+
+volumes:
+  es_data:
+
+networks:
+  job-aggregator:
+    driver: bridge
